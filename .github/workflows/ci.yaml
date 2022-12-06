@@ -118,6 +118,7 @@ jobs:
 
       - name: Build
         run: |
+          chown -R runner:docker /home/runner/go 
           make nuctl
           make nuctl-bin
         env:
