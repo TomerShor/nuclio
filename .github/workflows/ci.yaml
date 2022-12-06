@@ -127,6 +127,11 @@ jobs:
         run: |
           ./nuctl-$NUCLIO_LABEL-linux-amd64 version
 
+      # Enable tmate debugging of this workflow step if it fails
+      - name: Setup tmate session
+        if: ${{ failure() }}
+        uses: mxschmitt/action-tmate@v3
+
   build_docker_images:
     name: Build docker images
     runs-on: ubuntu-latest
