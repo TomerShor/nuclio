@@ -130,6 +130,7 @@ jobs:
 
       # Enable tmate debugging of this workflow step if it fails
       - name: Setup tmate session
+        if: {{ failure() }}
         uses: mxschmitt/action-tmate@v3
 
   build_docker_images:
