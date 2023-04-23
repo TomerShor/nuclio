@@ -51,8 +51,8 @@ jobs:
 
       - name: Overriding image rules
         if: github.event.inputs.image_rules_override != ''
-        run:
-#          echo "DOCKER_IMAGES_RULES=$(echo ${{ github.event.inputs.image_rules_override }} | tr ',' ' ')" >> $GITHUB_ENV
+        run: |
+          # echo "DOCKER_IMAGES_RULES=$(echo ${{ github.event.inputs.image_rules_override }} | tr ',' ' ')" >> $GITHUB_ENV
           echo "echo \"DOCKER_IMAGES_RULES=$(echo ${{ github.event.inputs.image_rules_override }} | tr ',' ' ')\" >> $GITHUB_ENV"
 
       - name: print targets
@@ -63,9 +63,9 @@ jobs:
           # if "handler-builder-golang-onbuild" is in the matrix
           # then ensure "handler-builder-golang-onbuild-alpine" is there too.
           docker_image_rules_json=$(echo $docker_image_rules_json | \
-#            jq -c 'select(.[].image_rule=="handler-builder-golang-onbuild") += [{"image_rule":"handler-builder-golang-onbuild-alpine"}]')
+            # jq -c 'select(.[].image_rule=="handler-builder-golang-onbuild") += [{"image_rule":"handler-builder-golang-onbuild-alpine"}]')
             echo "jq -c 'select(.[].image_rule==\"handler-builder-golang-onbuild\") += [{\"image_rule\":\"handler-builder-golang-onbuild-alpine\"}]')"
-#          echo "matrix={\"include\":$(echo $docker_image_rules_json)}" >> $GITHUB_OUTPUT
+          # echo "matrix={\"include\":$(echo $docker_image_rules_json)}" >> $GITHUB_OUTPUT
           echo "\"matrix={\\\"include\\\":$(echo $docker_image_rules_json)}\" >> $GITHUB_OUTPUT"
 
   release:
