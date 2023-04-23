@@ -24,6 +24,8 @@ on:
     branches:
     - development
 
+  on: workflow_dispatch
+
 env:
   REPO: quay.io
   REPO_NAME: nuclio
