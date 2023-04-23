@@ -147,8 +147,8 @@ jobs:
 
     - name: Build ${{ matrix.docker_image_rules.image_rule }} image
       run: |
-#        make pull-docker-images-cache || true
-#        make docker-images
+        # make pull-docker-images-cache || true
+        # make docker-images
         echo ${{ matrix.docker_image_rules.image_rule }}
       env:
         DOCKER_DEFAULT_PLATFORM: linux/${{ matrix.arch }}
