@@ -41,16 +41,45 @@ permissions:
 
 
 jobs:
+  matrix_prep:
+    name: Prepare image list
+    outputs:
+      matrix: ${{ steps.set-matrix.outputs.matrix }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Overriding image rules
+        if: github.event.inputs.image_rules_override != ''
+        run:
+#          echo "DOCKER_IMAGES_RULES=$(echo ${{ github.event.inputs.image_rules_override }} | tr ',' ' ')" >> $GITHUB_ENV
+          echo "echo \"DOCKER_IMAGES_RULES=$(echo ${{ github.event.inputs.image_rules_override }} | tr ',' ' ')\" >> $GITHUB_ENV"
+
+      - name: print targets
+        id: set-matrix
+        run: |
+          docker_image_rules_json=$(make print-docker-image-rules-json)
+
+          # if "handler-builder-golang-onbuild" is in the matrix
+          # then ensure "handler-builder-golang-onbuild-alpine" is there too.
+          docker_image_rules_json=$(echo $docker_image_rules_json | \
+#            jq -c 'select(.[].image_rule=="handler-builder-golang-onbuild") += [{"image_rule":"handler-builder-golang-onbuild-alpine"}]')
+            echo "jq -c 'select(.[].image_rule==\"handler-builder-golang-onbuild\") += [{\"image_rule\":\"handler-builder-golang-onbuild-alpine\"}]')"
+#          echo "matrix={\"include\":$(echo $docker_image_rules_json)}" >> $GITHUB_OUTPUT
+          echo "\"matrix={\\\"include\\\":$(echo $docker_image_rules_json)}\" >> $GITHUB_OUTPUT"
+
   release:
-    if: github.repository == 'nuclio/nuclio'
+#    if: github.repository == 'nuclio/nuclio'
     name: Release ${{ matrix.arch }}
     runs-on: ubuntu-latest
+    needs: matrix_prep
     strategy:
       fail-fast: false
       matrix:
         arch:
         - arm64
         - amd64
+        docker_image_rules: ${{ fromJson(needs.matrix_prep.outputs.matrix) }}
     steps:
     - name: Prepare envs
       run: |
@@ -88,95 +117,110 @@ jobs:
       with:
         platforms: ${{ matrix.arch }}
 
-    - name: Login to Quay.io
-      uses: docker/login-action@v2
-      with:
-        registry: ${{ env.REPO }}
-        username: ${{ secrets.QUAYIO_DOCKER_USERNAME }}
-        password: ${{ secrets.QUAYIO_DOCKER_PASSWORD }}
+#    - name: Login to Quay.io
+#      uses: docker/login-action@v2
+#      with:
+#        registry: ${{ env.REPO }}
+#        username: ${{ secrets.QUAYIO_DOCKER_USERNAME }}
+#        password: ${{ secrets.QUAYIO_DOCKER_PASSWORD }}
+#
+#    - name: Login to GitHub Container Registry
+#      uses: docker/login-action@v2
+#      with:
+#        registry: ${{ env.CACHE_REPO }}
+#        username: ${{ env.CACHE_REPO_NAME }}
+#        password: ${{ secrets.GITHUB_TOKEN }}
 
-    - name: Login to GitHub Container Registry
-      uses: docker/login-action@v2
-      with:
-        registry: ${{ env.CACHE_REPO }}
-        username: ${{ env.CACHE_REPO_NAME }}
-        password: ${{ secrets.GITHUB_TOKEN }}
-
-    - name: Build
+    - name: Extending image rules
       run: |
-        make pull-docker-images-cache || true
-        make docker-images
+        DOCKER_IMAGES_RULES=()
+
+        # if "onbuild-" in "matrix.image_rule", then add "processor" to DOCKER_IMAGES_RULES
+        # this is because onbuild images requires processor image
+        if [[ "${{ matrix.docker_image_rules.image_rule }}" == *"-onbuild"* ]]; then \
+            DOCKER_IMAGES_RULES+=("processor"); \
+        fi
+        DOCKER_IMAGES_RULES+=(${{ matrix.docker_image_rules.image_rule }})
+        
+        # TOMER - remove this:
+        echo $DOCKER_IMAGES_RULES
+
+    - name: Build ${{ matrix.docker_image_rules.image_rule }} image
+      run: |
+#        make pull-docker-images-cache || true
+#        make docker-images
+        echo ${{ matrix.docker_image_rules.image_rule }}
       env:
         DOCKER_DEFAULT_PLATFORM: linux/${{ matrix.arch }}
 
-    - name: Push cache images
-      if: env.NUCLIO_LABEL == 'unstable'
-      run: make push-docker-images-cache
-
-    - name: Push images
-      run: make push-docker-images
-
-    - name: Tag and push stable images
-      if: env.NUCLIO_LABEL != 'unstable' && github.event.release.target_commitish == 'master'
-      run: |
-        docker tag "$NUCLIO_DOCKER_REPO/dashboard:$NUCLIO_LABEL-$NUCLIO_ARCH" "$NUCLIO_DOCKER_REPO/dashboard:stable-$NUCLIO_ARCH"
-        docker push "$NUCLIO_DOCKER_REPO/dashboard:stable-$NUCLIO_ARCH"
-
-  release_binary:
-    if: github.event_name == 'release'
-    name: Release Binary ${{ matrix.arch }}
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        arch:
-        - arm64
-        - amd64
-    steps:
-    - name: Prepare envs
-      run: |
-        echo "NUCLIO_ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
-
-    - name: Prepare outputs
-      id: release_info
-      run: |
-        echo "REF_BRANCH=${GITHUB_REF#refs/heads/}" >> $GITHUB_OUTPUT
-        echo "REF_TAG=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-
-    - name: Set NUCLIO_LABEL to unstable
-      if: github.event_name == 'push'
-      run: echo "NUCLIO_LABEL=unstable" >> $GITHUB_ENV
-
-    - name: Set NUCLIO_LABEL to release tag
-      if: github.event_name == 'release'
-      run: echo "NUCLIO_LABEL=${{ steps.release_info.outputs.REF_TAG }}" >> $GITHUB_ENV
-
-    - uses: actions/checkout@v3
-
-    - uses: actions/setup-go@v3
-      with:
-        cache: true
-
-    - name: Install QEMU
-      if: matrix.arch != 'amd64'
-      uses: docker/setup-qemu-action@v2
-      with:
-        platforms: ${{ matrix.arch }}
-
-    - name: Build binaries
-      run: |
-        NUCLIO_OS=linux make tools
-        if [ $NUCLIO_ARCH == "amd64" ]; then \
-          NUCLIO_OS=darwin make tools; \
-          NUCLIO_OS=windows make tools; \
-        fi;
-      env:
-        NUCLIO_NUCTL_CREATE_SYMLINK: false
-        GOPATH: /home/runner/go
-        DOCKER_DEFAULT_PLATFORM: linux/${{ matrix.arch }}
-
-    - name: Upload binaries
-      uses: AButler/upload-release-assets@v2.0.2
-      with:
-        files: '/home/runner/go/bin/nuctl-*'
-        repo-token: ${{ secrets.GITHUB_TOKEN }}
+#    - name: Push cache images
+#      if: env.NUCLIO_LABEL == 'unstable'
+#      run: make push-docker-images-cache
+#
+#    - name: Push images
+#      run: make push-docker-images
+#
+#    - name: Tag and push stable images
+#      if: env.NUCLIO_LABEL != 'unstable' && github.event.release.target_commitish == 'master'
+#      run: |
+#        docker tag "$NUCLIO_DOCKER_REPO/dashboard:$NUCLIO_LABEL-$NUCLIO_ARCH" "$NUCLIO_DOCKER_REPO/dashboard:stable-$NUCLIO_ARCH"
+#        docker push "$NUCLIO_DOCKER_REPO/dashboard:stable-$NUCLIO_ARCH"
+#
+#  release_binary:
+#    if: github.event_name == 'release'
+#    name: Release Binary ${{ matrix.arch }}
+#    runs-on: ubuntu-latest
+#    strategy:
+#      fail-fast: false
+#      matrix:
+#        arch:
+#        - arm64
+#        - amd64
+#    steps:
+#    - name: Prepare envs
+#      run: |
+#        echo "NUCLIO_ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
+#
+#    - name: Prepare outputs
+#      id: release_info
+#      run: |
+#        echo "REF_BRANCH=${GITHUB_REF#refs/heads/}" >> $GITHUB_OUTPUT
+#        echo "REF_TAG=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+#
+#    - name: Set NUCLIO_LABEL to unstable
+#      if: github.event_name == 'push'
+#      run: echo "NUCLIO_LABEL=unstable" >> $GITHUB_ENV
+#
+#    - name: Set NUCLIO_LABEL to release tag
+#      if: github.event_name == 'release'
+#      run: echo "NUCLIO_LABEL=${{ steps.release_info.outputs.REF_TAG }}" >> $GITHUB_ENV
+#
+#    - uses: actions/checkout@v3
+#
+#    - uses: actions/setup-go@v3
+#      with:
+#        cache: true
+#
+#    - name: Install QEMU
+#      if: matrix.arch != 'amd64'
+#      uses: docker/setup-qemu-action@v2
+#      with:
+#        platforms: ${{ matrix.arch }}
+#
+#    - name: Build binaries
+#      run: |
+#        NUCLIO_OS=linux make tools
+#        if [ $NUCLIO_ARCH == "amd64" ]; then \
+#          NUCLIO_OS=darwin make tools; \
+#          NUCLIO_OS=windows make tools; \
+#        fi;
+#      env:
+#        NUCLIO_NUCTL_CREATE_SYMLINK: false
+#        GOPATH: /home/runner/go
+#        DOCKER_DEFAULT_PLATFORM: linux/${{ matrix.arch }}
+#
+#    - name: Upload binaries
+#      uses: AButler/upload-release-assets@v2.0.2
+#      with:
+#        files: '/home/runner/go/bin/nuctl-*'
+#        repo-token: ${{ secrets.GITHUB_TOKEN }}
