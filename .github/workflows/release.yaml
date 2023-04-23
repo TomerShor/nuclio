@@ -68,10 +68,8 @@ jobs:
           # if "handler-builder-golang-onbuild" is in the matrix
           # then ensure "handler-builder-golang-onbuild-alpine" is there too.
           docker_image_rules_json=$(echo $docker_image_rules_json | \
-            # jq -c 'select(.[].image_rule=="handler-builder-golang-onbuild") += [{"image_rule":"handler-builder-golang-onbuild-alpine"}]')
-            echo "jq -c 'select(.[].image_rule==\"handler-builder-golang-onbuild\") += [{\"image_rule\":\"handler-builder-golang-onbuild-alpine\"}]')"
-          # echo "matrix={\"include\":$(echo $docker_image_rules_json)}" >> $GITHUB_OUTPUT
-          echo "\"matrix={\\\"include\\\":$(echo $docker_image_rules_json)}\" >> $GITHUB_OUTPUT"
+            jq -c 'select(.[].image_rule=="handler-builder-golang-onbuild") += [{"image_rule":"handler-builder-golang-onbuild-alpine"}]')
+          echo "matrix={\"include\":$(echo $docker_image_rules_json)}" >> $GITHUB_OUTPUT
 
   release:
 #    if: github.repository == 'nuclio/nuclio'
@@ -155,6 +153,7 @@ jobs:
         # make pull-docker-images-cache || true
         # make docker-images
         echo ${{ matrix.docker_image_rules.image_rule }}
+        echo $DOCKER_DEFAULT_PLATFORM
       env:
         DOCKER_DEFAULT_PLATFORM: linux/${{ matrix.arch }}
 
