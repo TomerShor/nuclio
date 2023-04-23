@@ -56,9 +56,8 @@ jobs:
 
       - name: Overriding image rules
         if: github.event.inputs.image_rules_override != ''
-        run: |
-          # echo "DOCKER_IMAGES_RULES=$(echo ${{ github.event.inputs.image_rules_override }} | tr ',' ' ')" >> $GITHUB_ENV
-          echo "echo \"DOCKER_IMAGES_RULES=$(echo ${{ github.event.inputs.image_rules_override }} | tr ',' ' ')\" >> $GITHUB_ENV"
+        run:
+          echo "DOCKER_IMAGES_RULES=$(echo ${{ github.event.inputs.image_rules_override }} | tr ',' ' ')" >> $GITHUB_ENV
 
       - name: print targets
         id: set-matrix
@@ -152,6 +151,8 @@ jobs:
       run: |
         # make pull-docker-images-cache || true
         # make docker-images
+        
+        # TOMER - remove this:
         echo ${{ matrix.docker_image_rules.image_rule }}
         echo $DOCKER_DEFAULT_PLATFORM
       env:
