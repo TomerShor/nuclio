@@ -24,11 +24,10 @@ on:
     branches:
     - development
 
-  on:
-    workflow_dispatch:
-      inputs:
-        pr_number:
-          description: 'PR number'
+  workflow_dispatch:
+    inputs:
+      pr_number:
+        description: 'PR number'
 
 env:
   REPO: quay.io
