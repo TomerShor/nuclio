@@ -53,6 +53,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+          ref: refs/pull/${{ github.event.inputs.pr_number }}/merge
 
       - name: print targets
         id: set-matrix
@@ -99,6 +102,9 @@ jobs:
       run: echo "NUCLIO_LABEL=${{ steps.release_info.outputs.REF_TAG }}" >> $GITHUB_ENV
 
     - uses: actions/checkout@v3
+      with:
+        fetch-depth: 0
+        ref: refs/pull/${{ github.event.inputs.pr_number }}/merge
 
 #    - name: Freeing up disk space
 #      run: "${GITHUB_WORKSPACE}/hack/scripts/ci/free-space.sh"
