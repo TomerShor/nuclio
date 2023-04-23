@@ -139,21 +139,21 @@ jobs:
 
         # if "onbuild-" in "matrix.image_rule", then add "processor" to DOCKER_IMAGES_RULES
         # this is because onbuild images requires processor image
-        if [[ "${{ matrix.docker_image_rules.image_rule }}" == *"-onbuild"* ]]; then \
+        if [[ "${{ matrix.image_rule }}" == *"-onbuild"* ]]; then \
             DOCKER_IMAGES_RULES+=("processor"); \
         fi
-        DOCKER_IMAGES_RULES+=(${{ matrix.docker_image_rules.image_rule }})
+        DOCKER_IMAGES_RULES+=(${{ matrix.image_rule }})
         
         # TOMER - remove this:
         echo $DOCKER_IMAGES_RULES
 
-    - name: Build ${{ matrix.docker_image_rules.image_rule }} image
+    - name: Build ${{ matrix.image_rule }} image
       run: |
         # make pull-docker-images-cache || true
         # make docker-images
         
         # TOMER - remove this:
-        echo ${{ matrix.docker_image_rules.image_rule }}
+        echo ${{ matrix.image_rule }}
         echo $DOCKER_DEFAULT_PLATFORM
       env:
         DOCKER_DEFAULT_PLATFORM: linux/${{ matrix.arch }}
