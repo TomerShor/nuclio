@@ -68,7 +68,7 @@ jobs:
           # then ensure "handler-builder-golang-onbuild-alpine" is there too.
           docker_image_rules_json=$(echo $docker_image_rules_json | \
             jq -c 'select(.[].image_rule=="handler-builder-golang-onbuild") += [{"image_rule":"handler-builder-golang-onbuild-alpine"}]')
-          echo "matrix=$(echo $docker_image_rules_json | jq -r '[.[].image_rule]')" >> $GITHUB_OUTPUT
+          echo "matrix=$(echo $docker_image_rules_json | jq -c '[.[].image_rule]')" >> $GITHUB_OUTPUT
 
   release:
 #    if: github.repository == 'nuclio/nuclio'
