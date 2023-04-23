@@ -46,7 +46,7 @@ permissions:
 
 
 jobs:
-  matrix_prep:
+  image_matrix_prep:
     name: Prepare image list
     outputs:
       matrix: ${{ steps.set-matrix.outputs.matrix }}
@@ -68,20 +68,20 @@ jobs:
           # then ensure "handler-builder-golang-onbuild-alpine" is there too.
           docker_image_rules_json=$(echo $docker_image_rules_json | \
             jq -c 'select(.[].image_rule=="handler-builder-golang-onbuild") += [{"image_rule":"handler-builder-golang-onbuild-alpine"}]')
-          echo "matrix=$(echo $docker_image_rules_json)" >> $GITHUB_OUTPUT
+          echo "matrix=$(echo $docker_image_rules_json | jq -r '[.[].image_rule]')" >> $GITHUB_OUTPUT
 
   release:
 #    if: github.repository == 'nuclio/nuclio'
     name: Release ${{ matrix.arch }}
     runs-on: ubuntu-latest
-    needs: matrix_prep
+    needs: image_matrix_prep
     strategy:
       fail-fast: false
       matrix:
         arch:
         - arm64
         - amd64
-        include: ${{ fromJson(needs.matrix_prep.outputs.matrix) }}
+        docker_image_rules: ${{ fromJson(needs.image_matrix_prep.outputs.matrix) }}
     steps:
     - name: Prepare envs
       run: |
@@ -104,9 +104,9 @@ jobs:
       run: echo "NUCLIO_LABEL=${{ steps.release_info.outputs.REF_TAG }}" >> $GITHUB_ENV
 
     - uses: actions/checkout@v3
-
-    - name: Freeing up disk space
-      run: "${GITHUB_WORKSPACE}/hack/scripts/ci/free-space.sh"
+#
+#    - name: Freeing up disk space
+#      run: "${GITHUB_WORKSPACE}/hack/scripts/ci/free-space.sh"
 
     - uses: actions/setup-go@v3
       with:
@@ -137,23 +137,23 @@ jobs:
       run: |
         DOCKER_IMAGES_RULES=()
 
-        # if "onbuild-" in "matrix.image_rule", then add "processor" to DOCKER_IMAGES_RULES
+        # if "onbuild-" in "matrix.docker_image_rules.image_rule", then add "processor" to DOCKER_IMAGES_RULES
         # this is because onbuild images requires processor image
-        if [[ "${{ matrix.image_rule }}" == *"-onbuild"* ]]; then \
+        if [[ "${{ matrix.docker_image_rules.image_rule }}" == *"-onbuild"* ]]; then \
             DOCKER_IMAGES_RULES+=("processor"); \
         fi
-        DOCKER_IMAGES_RULES+=(${{ matrix.image_rule }})
+        DOCKER_IMAGES_RULES+=(${{ matrix.docker_image_rules.image_rule }})
         
         # TOMER - remove this:
         echo $DOCKER_IMAGES_RULES
 
-    - name: Build ${{ matrix.image_rule }} image
+    - name: Build ${{ matrix.docker_image_rules.image_rule }} image
       run: |
         # make pull-docker-images-cache || true
         # make docker-images
         
         # TOMER - remove this:
-        echo ${{ matrix.image_rule }}
+        echo ${{ matrix.docker_image_rules.image_rule }}
         echo $DOCKER_DEFAULT_PLATFORM
       env:
         DOCKER_DEFAULT_PLATFORM: linux/${{ matrix.arch }}
