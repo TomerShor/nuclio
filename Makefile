@@ -164,11 +164,11 @@ docker-images: $(DOCKER_IMAGES_RULES)
 
 .PHONY: pull-docker-images-cache
 pull-docker-images-cache:
-	@printf '%s\n' $(DOCKER_IMAGES_CACHE) | xargs -n 1 -P 5 docker pull
+	@printf 'PULLING - %s\n' $(DOCKER_IMAGES_CACHE) # | xargs -n 1 -P 5 docker pull
 
 .PHONY: push-docker-images-cache
 push-docker-images-cache:
-	@printf '%s\n' $(DOCKER_IMAGES_CACHE) | xargs -n 1 -P 5 docker push
+	@printf 'PUSHING - %s\n' $(DOCKER_IMAGES_CACHE) # | xargs -n 1 -P 5 echo docker push
 
 .PHONY: tools
 tools: ensure-gopath nuctl

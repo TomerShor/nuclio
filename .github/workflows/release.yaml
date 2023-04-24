@@ -110,33 +110,33 @@ jobs:
         fetch-depth: 0
         ref: refs/pull/${{ github.event.inputs.pr_number }}/merge
 
-    - name: Freeing up disk space
-      run: "${GITHUB_WORKSPACE}/hack/scripts/ci/free-space.sh"
+#    - name: Freeing up disk space
+#      run: "${GITHUB_WORKSPACE}/hack/scripts/ci/free-space.sh"
 
     - uses: actions/setup-go@v3
       with:
         cache: true
         go-version-file: go.mod
 
-    - name: Install QEMU
-      if: matrix.arch != 'amd64'
-      uses: docker/setup-qemu-action@v2
-      with:
-        platforms: ${{ matrix.arch }}
-
-    - name: Login to Quay.io
-      uses: docker/login-action@v2
-      with:
-        registry: ${{ env.REPO }}
-        username: ${{ secrets.QUAYIO_DOCKER_USERNAME }}
-        password: ${{ secrets.QUAYIO_DOCKER_PASSWORD }}
-
-    - name: Login to GitHub Container Registry
-      uses: docker/login-action@v2
-      with:
-        registry: ${{ env.CACHE_REPO }}
-        username: ${{ env.CACHE_REPO_NAME }}
-        password: ${{ secrets.GITHUB_TOKEN }}
+#    - name: Install QEMU
+#      if: matrix.arch != 'amd64'
+#      uses: docker/setup-qemu-action@v2
+#      with:
+#        platforms: ${{ matrix.arch }}
+#
+#    - name: Login to Quay.io
+#      uses: docker/login-action@v2
+#      with:
+#        registry: ${{ env.REPO }}
+#        username: ${{ secrets.QUAYIO_DOCKER_USERNAME }}
+#        password: ${{ secrets.QUAYIO_DOCKER_PASSWORD }}
+#
+#    - name: Login to GitHub Container Registry
+#      uses: docker/login-action@v2
+#      with:
+#        registry: ${{ env.CACHE_REPO }}
+#        username: ${{ env.CACHE_REPO_NAME }}
+#        password: ${{ secrets.GITHUB_TOKEN }}
 
     - name: Extending image rules
       run: |
@@ -178,61 +178,61 @@ jobs:
       env:
         DOCKER_IMAGES_RULES: ${{ env.DOCKER_IMAGES_RULES }}
 
-  release_binary:
-    if: github.event_name == 'release'
-    name: Release Binary ${{ matrix.arch }}
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        arch:
-        - arm64
-        - amd64
-    steps:
-    - name: Prepare envs
-      run: |
-        echo "NUCLIO_ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
-
-    - name: Prepare outputs
-      id: release_info
-      run: |
-        echo "REF_BRANCH=${GITHUB_REF#refs/heads/}" >> $GITHUB_OUTPUT
-        echo "REF_TAG=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
-
-    - name: Set NUCLIO_LABEL to unstable
-      if: github.event_name == 'push'
-      run: echo "NUCLIO_LABEL=unstable" >> $GITHUB_ENV
-
-    - name: Set NUCLIO_LABEL to release tag
-      if: github.event_name == 'release'
-      run: echo "NUCLIO_LABEL=${{ steps.release_info.outputs.REF_TAG }}" >> $GITHUB_ENV
-
-    - uses: actions/checkout@v3
-
-    - uses: actions/setup-go@v3
-      with:
-        cache: true
-
-    - name: Install QEMU
-      if: matrix.arch != 'amd64'
-      uses: docker/setup-qemu-action@v2
-      with:
-        platforms: ${{ matrix.arch }}
-
-    - name: Build binaries
-      run: |
-        NUCLIO_OS=linux make tools
-        if [ $NUCLIO_ARCH == "amd64" ]; then \
-          NUCLIO_OS=darwin make tools; \
-          NUCLIO_OS=windows make tools; \
-        fi;
-      env:
-        NUCLIO_NUCTL_CREATE_SYMLINK: false
-        GOPATH: /home/runner/go
-        DOCKER_DEFAULT_PLATFORM: linux/${{ matrix.arch }}
-
-    - name: Upload binaries
-      uses: AButler/upload-release-assets@v2.0.2
-      with:
-        files: '/home/runner/go/bin/nuctl-*'
-        repo-token: ${{ secrets.GITHUB_TOKEN }}
+#  release_binary:
+#    if: github.event_name == 'release'
+#    name: Release Binary ${{ matrix.arch }}
+#    runs-on: ubuntu-latest
+#    strategy:
+#      fail-fast: false
+#      matrix:
+#        arch:
+#        - arm64
+#        - amd64
+#    steps:
+#    - name: Prepare envs
+#      run: |
+#        echo "NUCLIO_ARCH=${{ matrix.arch }}" >> $GITHUB_ENV
+#
+#    - name: Prepare outputs
+#      id: release_info
+#      run: |
+#        echo "REF_BRANCH=${GITHUB_REF#refs/heads/}" >> $GITHUB_OUTPUT
+#        echo "REF_TAG=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+#
+#    - name: Set NUCLIO_LABEL to unstable
+#      if: github.event_name == 'push'
+#      run: echo "NUCLIO_LABEL=unstable" >> $GITHUB_ENV
+#
+#    - name: Set NUCLIO_LABEL to release tag
+#      if: github.event_name == 'release'
+#      run: echo "NUCLIO_LABEL=${{ steps.release_info.outputs.REF_TAG }}" >> $GITHUB_ENV
+#
+#    - uses: actions/checkout@v3
+#
+#    - uses: actions/setup-go@v3
+#      with:
+#        cache: true
+#
+#    - name: Install QEMU
+#      if: matrix.arch != 'amd64'
+#      uses: docker/setup-qemu-action@v2
+#      with:
+#        platforms: ${{ matrix.arch }}
+#
+#    - name: Build binaries
+#      run: |
+#        NUCLIO_OS=linux make tools
+#        if [ $NUCLIO_ARCH == "amd64" ]; then \
+#          NUCLIO_OS=darwin make tools; \
+#          NUCLIO_OS=windows make tools; \
+#        fi;
+#      env:
+#        NUCLIO_NUCTL_CREATE_SYMLINK: false
+#        GOPATH: /home/runner/go
+#        DOCKER_DEFAULT_PLATFORM: linux/${{ matrix.arch }}
+#
+#    - name: Upload binaries
+#      uses: AButler/upload-release-assets@v2.0.2
+#      with:
+#        files: '/home/runner/go/bin/nuctl-*'
+#        repo-token: ${{ secrets.GITHUB_TOKEN }}
