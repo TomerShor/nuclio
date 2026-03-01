@@ -36,13 +36,19 @@ import (
 	"github.com/nuclio/nuclio/pkg/dockerclient"
 	"github.com/nuclio/nuclio/pkg/functionconfig"
 	"github.com/nuclio/nuclio/pkg/platform"
-	"github.com/nuclio/nuclio/pkg/processor/trigger/test"
+	triggertest "github.com/nuclio/nuclio/pkg/processor/trigger/test"
 	"github.com/nuclio/nuclio/pkg/processor/util/partitionworker"
 
 	"github.com/IBM/sarama"
 	"github.com/nuclio/errors"
 	"github.com/stretchr/testify/suite"
-	"k8s.io/api/core/v1"
+	v1 "k8s.io/api/core/v1"
+)
+
+const (
+	ZooKeeperContainerPort      = 2181
+	BrokerInternalContainerPort = 9090
+	BrokerContainerPort         = 9092
 )
 
 type testSuite struct {
@@ -65,6 +71,8 @@ type testSuite struct {
 	brokerURL              string
 	brokerContainerName    string
 	zooKeeperContainerName string
+	zooKeeperConnectURL    string // "ip:2181" so Kafka does not rely on Docker DNS (flaky on GH runners)
+	brokerTriggerURL       string // Kafka broker URL for trigger (ip:9090), avoids Docker DNS for processor containers
 
 	// for cleanup
 	zooKeeperContainerID string
@@ -100,7 +108,7 @@ func (suite *testSuite) SetupSuite() {
 	suite.NumPartitions = 4
 
 	// kafka cluster
-	suite.brokerPort = 9092
+	suite.brokerPort = BrokerContainerPort
 	suite.brokerContainerName = "nuclio-kafka-broker"
 	suite.zooKeeperContainerName = "nuclio-kafka-zookeeper"
 	suite.brokerURL = fmt.Sprintf("%s:%d", suite.BrokerHost, suite.brokerPort)
@@ -111,10 +119,7 @@ func (suite *testSuite) SetupSuite() {
 	suite.AbstractBrokerSuite.SetupSuite()
 
 	// start zoo keeper container
-	suite.zooKeeperContainerID = suite.RunContainer(suite.getKafkaZooKeeperContainerRunInfo())
-
-	// start broker container
-	suite.StartBrokerContainer(suite.GetContainerRunInfo())
+	suite.startZooKeeperContainer()
 
 	suite.Logger.InfoWith("Creating broker resources",
 		"brokerHost", suite.BrokerHost)
@@ -152,9 +157,18 @@ func (suite *testSuite) SetupSuite() {
 }
 
 func (suite *testSuite) TearDownSuite() {
-	if suite.zooKeeperContainerID != "" {
-		err := suite.DockerClient.RemoveContainer(suite.zooKeeperContainerID)
-		suite.NoError(err)
+
+	// Explicitly remove containers (`Remove: false` means Docker won't auto-clean them).
+	// Use container names as fallback in case the ID wasn't captured (e.g. SetupSuite failure).
+	for _, id := range []string{
+		suite.zooKeeperContainerID,
+		suite.zooKeeperContainerName,
+		suite.BrokerContainerID,
+		suite.brokerContainerName,
+	} {
+		if id != "" {
+			_ = suite.DockerClient.RemoveContainer(id)
+		}
 	}
 
 	suite.AbstractBrokerSuite.TearDownSuite()
@@ -164,6 +178,7 @@ func (suite *testSuite) WaitForBroker() error {
 	expectedLogSubstring := "started (kafka.server.KafkaServer)"
 	var containerLogs string
 	var containerLogsErr error
+	var brokerExitedErr error
 
 	err := common.RetryUntilSuccessful(120*time.Second, 3*time.Second, func() bool {
 		// fetch Kafka container logs
@@ -171,6 +186,26 @@ func (suite *testSuite) WaitForBroker() error {
 		if containerLogsErr != nil {
 			suite.Logger.WarnWith("Failed to get Kafka container logs", "err", containerLogsErr)
 			return false
+		}
+
+		// check if container exited (broker crashed); capture error so caller can retry
+		containers, containersErr := suite.DockerClient.GetContainers(&dockerclient.GetContainerOptions{
+			Name:    suite.brokerContainerName,
+			Stopped: true,
+		})
+		if containersErr == nil && len(containers) == 1 && containers[0].State != nil && containers[0].State.Status == "exited" {
+			state := containers[0].State
+			exitCode := state.ExitCode
+			zooKeeperLogs := suite.getZookeeperContainerLogs()
+			suite.Logger.WarnWith("Kafka broker container exited",
+				"exitCode", exitCode,
+				"oomKilled", state.OOMKilled,
+				"error", state.Error,
+				"containerLogs", containerLogs,
+				"zookeeperLogs", zooKeeperLogs)
+			brokerExitedErr = errors.Errorf("Kafka broker container exited unexpectedly (exit code %d). Kafka logs:\n%s\nZookeeper logs:\n%s",
+				exitCode, containerLogs, zooKeeperLogs)
+			return true // break the retry loop immediately; brokerExitedErr is checked below
 		}
 
 		// check for broker startup confirmation line
@@ -182,8 +217,13 @@ func (suite *testSuite) WaitForBroker() error {
 		return false
 	})
 
-	suite.Require().NoError(err, "Kafka broker did not start within the given timeframe")
-
+	if brokerExitedErr != nil {
+		return brokerExitedErr
+	}
+	if err != nil {
+		zooKeeperLogs := suite.getZookeeperContainerLogs()
+		return errors.Errorf("Kafka broker did not start within the given timeframe. Zookeeper logs:\n%s", zooKeeperLogs)
+	}
 	return nil
 }
 
@@ -232,7 +272,7 @@ func (suite *testSuite) TestReceiveRecords() {
 			createFunctionOptions.FunctionConfig.Spec.Triggers = map[string]functionconfig.Trigger{
 				"my-kafka": {
 					Kind: "kafka-cluster",
-					URL:  fmt.Sprintf("%s:9090", suite.brokerContainerName),
+					URL:  suite.brokerTriggerURL,
 					Attributes: map[string]interface{}{
 						"topics":        []string{suite.topic},
 						"consumerGroup": functionName,
@@ -316,7 +356,7 @@ func (suite *testSuite) TestExplicitAck() {
 			createFunctionOptions.FunctionConfig.Spec.Triggers = map[string]functionconfig.Trigger{
 				"my-kafka": {
 					Kind: "kafka-cluster",
-					URL:  fmt.Sprintf("%s:9090", suite.brokerContainerName),
+					URL:  suite.brokerTriggerURL,
 					Attributes: map[string]interface{}{
 						"topics":               []string{topic},
 						"consumerGroup":        functionName,
@@ -480,7 +520,7 @@ func (suite *testSuite) TestDrainHook() {
 		suite.Logger.Debug("Creating second function, to trigger rebalance")
 
 		suite.DeployFunction(newCreateFunctionOptions, func(newDeployResult *platform.CreateFunctionResult) bool {
-			suite.Require().NotNil(deployResult, "Unexpected empty second deploy results")
+			suite.Require().NotNil(newDeployResult, "Unexpected empty second deploy results")
 			rebalanceStartedTime = time.Now()
 
 			suite.Logger.DebugWith("Created second function, producing messages to topic",
@@ -748,7 +788,7 @@ func (suite *testSuite) getBasePlatformSpec() functionconfig.Platform {
 func (suite *testSuite) getKafkaTriggerSpec(config *kafkaDeployOptionsConfig) map[string]functionconfig.Trigger {
 	kafkaTrigger := functionconfig.Trigger{
 		Kind: "kafka-cluster",
-		URL:  fmt.Sprintf("%s:9090", suite.brokerContainerName),
+		URL:  suite.brokerTriggerURL,
 		Attributes: map[string]interface{}{
 			"topics":        []string{config.topic},
 			"consumerGroup": config.consumerGroup,
@@ -799,26 +839,68 @@ func (suite *testSuite) getLenRecodedEventsAndEnsureNoDuplicates(filePath string
 	return len(matches)
 }
 
+func (suite *testSuite) startZooKeeperContainer() {
+	suite.zooKeeperContainerID = suite.RunContainer(suite.getKafkaZooKeeperContainerRunInfo())
+
+	// Use Zookeeper container IP for Kafka connection so we don't rely on Docker DNS (flaky on GH runners).
+	zooKeeperIPs, err := suite.DockerClient.GetContainerIPAddresses(suite.zooKeeperContainerID)
+	suite.Require().NoError(err, "Failed to get Zookeeper container IP")
+	suite.Require().NotEmpty(zooKeeperIPs, "Zookeeper container has no IP")
+	suite.zooKeeperConnectURL = zooKeeperIPs[0] + fmt.Sprintf(":%d", ZooKeeperContainerPort)
+
+	// start broker container; retry once on failure (e.g. transient GH runner issues)
+	imageName, runOptions := suite.GetContainerRunInfo()
+	var waitErr error
+	for attempt := 1; attempt <= 2; attempt++ {
+		if attempt > 1 {
+			if suite.BrokerContainerID != "" {
+				_ = suite.DockerClient.RemoveContainer(suite.BrokerContainerID)
+				suite.BrokerContainerID = ""
+			}
+			suite.Logger.InfoWith("Retrying Kafka broker startup after previous failure")
+			time.Sleep(2 * time.Second)
+		}
+		suite.BrokerContainerID = suite.RunContainer(imageName, runOptions)
+		waitErr = suite.WaitForBroker()
+		if waitErr == nil {
+			break
+		}
+		if attempt == 2 {
+			suite.Require().NoError(waitErr, "Error waiting for broker to be ready")
+		}
+	}
+
+	// Use broker container IP for trigger URL so processor containers do not rely on Docker DNS.
+	brokerIPs, err := suite.DockerClient.GetContainerIPAddresses(suite.BrokerContainerID)
+	suite.Require().NoError(err, "Failed to get broker container IP")
+	suite.Require().NotEmpty(brokerIPs, "Broker container has no IP")
+	suite.brokerTriggerURL = brokerIPs[0] + fmt.Sprintf(":%d", BrokerContainerPort)
+}
+
 // GetContainerRunInfo returns information about the broker container
 func (suite *testSuite) GetContainerRunInfo() (string, *dockerclient.RunOptions) {
 	return "gcr.io/iguazio/kafka", &dockerclient.RunOptions{
 		ContainerName: suite.brokerContainerName,
 		Network:       suite.BrokerContainerNetworkName,
-		Remove:        true,
+		Remove:        false, // keep container on exit so we can capture logs on failure
 		Ports: map[int]int{
 
 			// broker
 			suite.brokerPort: suite.brokerPort,
 		},
 		Env: map[string]string{
-			"KAFKA_ZOOKEEPER_CONNECT":              fmt.Sprintf("%s:2181", suite.zooKeeperContainerName),
+			// Disable JVM container support to avoid NPE in CgroupV2Subsystem on GH runners (cgroup v2).
+			"JAVA_TOOL_OPTIONS":                    "-XX:-UseContainerSupport",
+			"KAFKA_ZOOKEEPER_CONNECT":              suite.zooKeeperConnectURL,
 			"KAFKA_LISTENER_SECURITY_PROTOCOL_MAP": "INTERNAL:PLAINTEXT,EXTERNAL:PLAINTEXT",
 			"KAFKA_INTER_BROKER_LISTENER_NAME":     "INTERNAL",
-			"KAFKA_LISTENERS": fmt.Sprintf("INTERNAL://:9090,EXTERNAL://:%d",
+			"KAFKA_LISTENERS": fmt.Sprintf("INTERNAL://:%d,EXTERNAL://:%d",
+				BrokerInternalContainerPort,
 				suite.brokerPort),
 			"KAFKA_ADVERTISED_LISTENERS": fmt.Sprintf(
-				"INTERNAL://%s:9090,EXTERNAL://%s:%d",
+				"INTERNAL://%s:%d,EXTERNAL://%s:%d",
 				suite.brokerContainerName,
+				BrokerInternalContainerPort,
 				suite.BrokerHost,
 				suite.brokerPort,
 			),
@@ -830,11 +912,24 @@ func (suite *testSuite) getKafkaZooKeeperContainerRunInfo() (string, *dockerclie
 	return "gcr.io/iguazio/zookeeper", &dockerclient.RunOptions{
 		ContainerName: suite.zooKeeperContainerName,
 		Network:       suite.BrokerContainerNetworkName,
-		Remove:        true,
+		Remove:        false, // keep container on exit so we can capture logs on failure
 		Ports: map[int]int{
-			dockerclient.RunOptionsRandomPort: 2181,
+			dockerclient.RunOptionsRandomPort: ZooKeeperContainerPort,
 		},
 	}
+}
+
+// getZookeeperContainerLogs returns Zookeeper container logs for debugging when the broker fails.
+// Returns a placeholder string if logs cannot be fetched (e.g. container already removed).
+func (suite *testSuite) getZookeeperContainerLogs() string {
+	logs, err := suite.DockerClient.GetContainerLogs(suite.zooKeeperContainerName)
+	if err != nil {
+		return fmt.Sprintf("(failed to get Zookeeper logs: %v)", err)
+	}
+	if logs == "" {
+		return "(Zookeeper container had no logs)"
+	}
+	return logs
 }
 
 func (suite *testSuite) publishMessageToTopic(topic string, body string) error {
